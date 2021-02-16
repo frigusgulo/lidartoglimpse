@@ -1,5 +1,4 @@
-import cupy as np
-import numpy
+import numpy as np
 import laspy as lp
 import scipy
 from laspy.file import File
@@ -15,7 +14,7 @@ class Scan():
 		self.filepath = filepath
 		self.file = File(self.filepath.filepath,mode="r")
 		self.header = self.file.header
-		self.points = numpy.vstack([self.file.x, self.file.y, self.file.z]).transpose()
+		self.points = np.vstack([self.file.x, self.file.y, self.file.z]).transpose()
 		self.tree = KDTree(self.points[:,:2])
 		
 		
@@ -23,32 +22,30 @@ class Scan():
 
 		#print(f"Instantiating Scan From {self.filepath.filepath}\n")
 	def knn(self,point,k):
-		point = np.asnumpy(point)
 		return self.points[self.tree.query(point,k=k)[1],:]
 
 	def radialcluster(self,point,radius):
 
 		# Return a descriptive vector of the radially queried surface points from the scan
 		point_nn = self.tree.query(point,k=1)[1]
-		point_nn = np.array(self.points[point_nn,:])[:2]
+		point_nn = self.points[point_nn,:2]
 
-		locs = np.array(self.points[self.tree.query_ball_point(point_nn.get(),radius,n_jobs=-1),:])
+		locs = self.points[self.tree.query_ball_point(point_nn,radius,n_jobs=-1),:]
 	
 		distances = np.linalg.norm((locs[:,:2] - point_nn),axis=-1)
 		weights = distances/distances.sum()
 		geometricmean = np.average(locs,weights=weights,axis=0)
 		locs -= geometricmean
-		cov = (1/locs.shape[0])*locs.T@locs
-		eigs = np.linalg.eigvalsh(cov)
+		cov = np.cov(locs.T)
+		eigs = np.linalg.eigvals(cov)
 		feats = np.array([eigs[0]-eigs[1],eigs[1]-eigs[2],eigs[2]])/eigs[0]
-		descriptor = np.hstack((eigs.flatten(),feats.flatten()))
-		return descriptor
-	
+		return feats
+
 
 	def downsample(self,filepath,skipinterval,xbounds,ybounds):
-		Xvalid = numpy.logical_and((numpy.min(xbounds) <= self.file.x),numpy.max(xbounds) >= self.file.x)
-		Yvalid = numpy.logical_and((numpy.min(ybounds) <= self.file.y),numpy.max(ybounds) >= self.file.y)
-		keep = numpy.where(numpy.logical_and(Xvalid,Yvalid))
+		Xvalid = np.logical_and((np.min(xbounds) <= self.file.x),np.max(xbounds) >= self.file.x)
+		Yvalid = np.logical_and((np.min(ybounds) <= self.file.y),np.max(ybounds) >= self.file.y)
+		keep = np.where(np.logical_and(Xvalid,Yvalid))
 		points = self.points[keep]
 		shuffleinds = np.random.shuffle(np.arange(points.shape[0]))
 		points = np.array(points)[shuffleinds]

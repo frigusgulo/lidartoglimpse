@@ -1,9 +1,8 @@
-import cupy as np 
-import numpy
+import numpy as np 
 import datetime
 import sys
 import matplotlib.pyplot as plt
-
+cm = plt.cm.get_cmap('RdYlBu')
 from .motion import CartesianMotion
 from .scanset import Scanset
 from .raster import Raster
@@ -17,18 +16,24 @@ class Tracker:
 	def __init__(
 		self,
 		motionmodel: CartesianMotion,
-		initialscan: Scan):
+		initialscan: Scan = None,
+		calibrate: bool = False):
+
+
 		self.motionmodel = motionmodel
 		self.refscan = initialscan
+		if self.refscan is not None:
+			self.datetime = self.refscan.datetime
+		self.calibrate = calibrate
 		self.particles = None
 		self.weights = None
 		self.refclusters = None
-		self.datetime = self.refscan.datetime 
-		self.initialize()
+
+		#self.reference_point = np.array([530884.00,7356524.00]) 
+		self.initialize(self.calibrate)
 
 	def query_scan(self,scan: Scan,loc):
-		loc = loc.get()
-		return scan.radialcluster(point=loc,radius=4)
+		return scan.radialcluster(point=loc,radius=5)
 
 	
 	def getfeatures(self,particles,scan: Scan):
@@ -36,10 +41,11 @@ class Tracker:
 		return np.array(features)
 
 	
-	def initialize(self):
+	def initialize(self, calibrate=False):
 		#print(f"Initializing With {self.refscan}\n")
 		self.particles = self.motionmodel.init_particles()
-		self.reference_feature = self.query_scan(self.refscan,np.array(self.motionmodel.xy[:2]))#self.gen_clusters(self.particles,self.refscan)
+		if not calibrate:
+			self.reference_feature = self.query_scan(self.refscan,self.motionmodel.xy[:2])#self.gen_clusters(self.particles,self.refscan)
 		self.n = self.particles.shape[0]
 		self.weights = np.ones(self.n)/self.n
 
@@ -92,7 +98,7 @@ class Tracker:
 		self.datetime = scan.datetime
 		self.refscan = scan
 
-		self.motionmodel.evolve_particles(self.particles,self.dt)
+		self.particles = self.motionmodel.evolve_particles(self.particles,self.dt)
 		testfeatures = self.getfeatures(self.particles,scan)
 		log_likelihood = np.linalg.norm((testfeatures-self.reference_feature),axis=-1)
 
@@ -102,8 +108,8 @@ class Tracker:
 	
 	def update_weights(self,scan: Scan,dt: datetime.timedelta=None):
 		self.weights = np.exp(-self.scans_likelihood(scan, dt)) + 1e-300
+		self.weights[~np.isnan(self.weights)] *= 1/self.weights[~np.isnan(self.weights)].sum()
 		self.weights[np.isnan(self.weights)] = 0
-		self.weights *= 1/self.weights.sum()
 
 
 	def systematic_resample(self):
@@ -123,9 +129,9 @@ class Tracker:
 
 
 	def residual_resample(self):
-		repetitions=(self.n*self.weights.get()).astype(int)
+		repetitions=(self.n*self.weights).astype(int)
 		initial_indexes = numpy.repeat(numpy.arange(self.n), repetitions)
-		residuals = self.weights.get() - repetitions
+		residuals = self.weights - repetitions
 		residuals += 1e-300
 		residuals *= 1 / residuals.sum()
 		cumulative_sum = np.cumsum(residuals)
@@ -140,7 +146,6 @@ class Tracker:
 		self.weights = self.weights[indexes]
 		self.weights *= 1/self.weights.sum()
 		posterior = self.particle_mean()
-		print(posterior)
 		self.reference_feature = self.query_scan(self.refscan,posterior[:2])
 		return posterior
 
@@ -150,8 +155,24 @@ class Tracker:
 	def track(self, scan: Scan=None,calibrate: bool = False,dt: datetime.timedelta =None):
 		if calibrate:
 			#print(f"\n Calibrating From {self.refscan}\n")
-			self.update_weights(self.refscan,dt)
-			_ = self.systematic_resample()
+			self.particles = self.motionmodel.evolve_particles(self.particles,dt)
+			print(f"\n Variance X: {np.var(self.particles[:,0])} Variance Y: {np.var(self.particles[:,1])}")
+			print(f"\n Variance VX: {np.var(self.particles[:,3])} Variance VY: {np.var(self.particles[:,4])}")
+			x = self.particles[:,0] - np.mean(self.particles[:,0])
+			y = self.particles[:,1]- np.mean(self.particles[:,1])
+			vels = np.linalg.norm(self.particles[:,3:5],axis=-1)
+			#colors = np.unique(vels)
+			#print(vels)
+			#vels = np.searchsorted(colors,vels)
+			plt.xlim(-30,30)
+			plt.ylim(-30,30)
+			plt.title("Particle Velocities M/D")
+			sc = plt.scatter(x,y,s=5,c=vels,vmin=-20,vmax=20,cmap=cm)
+			plt.scatter(0,0,c='g',s=50)
+			plt.colorbar(sc)
+			plt.show()
+			plt.clf()
+			return self.particles
 			#self.rewind()
 
 		else:

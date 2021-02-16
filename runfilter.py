@@ -1,4 +1,4 @@
-import cupy as np
+import numpy as np
 import laspy as lp 
 import os
 import datetime
@@ -21,10 +21,10 @@ from motiontracking.tracker import Tracker
 
 
 raster_path = "/home/dunbar/Research/helheim/data/2016_cpd_vels"
-#lazfile_path = "/home/dunbar/Research/helheim/data/lazfiles"
-lazfile_path = "/home/dunbar/Research/helheim/lidartoglimpse/data/downsampledlazfiles"
+lazfile_path = "/home/dunbar/Research/helheim/data/lazfiles"
+#lazfile_path = "/home/dunbar/Research/helheim/lidartoglimpse/data/downsampledlazfiles"
 velorasters = glob(join(raster_path,"*.tif"))
-lazfiles = glob(join(lazfile_path,"*.dslaz"))
+lazfiles = glob(join(lazfile_path,"*.laz"))
 lazfiles = [ Filepath(x) for x in lazfiles ]
 lazfiles.sort(key= lambda i: i.datetime) 
 cpdvels = [Filepath(x) for x in velorasters]
@@ -43,8 +43,8 @@ grid = [[x,y] for x in easting for y in northing]
 mid = len(grid)//2
 #grid = [grid[mid]]
 
-initialscan = Scan(lazfiles[0])
-scanset = Scanset(lazfiles[1:])
+#initialscan = Scan(lazfiles[0])
+#scanset = Scanset(lazfiles[1:])
 
 # CPD resolution is 15x15 meters per cell
 
@@ -52,27 +52,40 @@ DEM = Raster("/home/dunbar/Research/helheim/data/observations/dem/helheim_wgs84U
 motionparams = {
 	"timestep": datetime.timedelta(days=1),
 	"DEM": DEM,
-	"xy_sigma": np.array([5,5]),
-	"vxyz": np.array([10,10,1]),
-	"vxyz_sigma": np.array([4.5,4.5,2]),
+	"xy_sigma": np.array([1.5,1.5]),
+	"vxyz": np.array([10,-10,1]),
+	"vxyz_sigma": np.array([3,3,2]),
 	"axyz": np.array([0,0,0]),
-	"axyz_sigma": np.array([1,1,.1])
+	"axyz_sigma": np.array([1.5,1.5,.1])
 }
 
 
-trackergrid = [Tracker(CartesianMotion(xy=point,**motionparams),initialscan) for point in grid]
+trackergrid = [Tracker(CartesianMotion(xy=point,**motionparams),calibrate=True) for point in grid]
 print(f"\n Observing At {len(trackergrid)} Points \n")
 
-
-calibration_iters = 2**2
+'''
+calibration_iters = 24
 timestep = np.ones(calibration_iters)
-timestep[::2]*=-1
 timestep = timestep.tolist()
-with ThreadPoolExecutor(max_workers=8) as executor:
-	for time in timestep:
-		dt = datetime.timedelta(hours=time)
-		executor.map(lambda tracker: tracker.track(calibrate=True,dt=dt),trackergrid)
+
+particle_set = []
+tracker = trackergrid[0]
+for time in timestep:
+	dt = datetime.timedelta(hours=time)
+	particles = tracker.track(calibrate=True,dt=dt)
+	particle_set.append(particles)
+
+print(len(particle_set))
+tracks = np.array(tracks)
+particle_set = np.array([ps for ps in particle_set])
+
+print(tracks.shape)
+print(np.unique(particles,axis=0).shape)
+
+
+np.save("data/calibration_particles",particle_set)
 print(f"\n\n Calibration Complete\n\n")
+'''
 
 #points = np.array([tracker.particle_mean() for tracker in trackergrid])
 #trackergrid[0].refscan.plot(points[:,0:2])

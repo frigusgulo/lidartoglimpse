@@ -32,7 +32,7 @@ Compare particle filter estimates with cpd vels via sampling locations from the 
 
 
 raster_path = "/home/dunbar/Research/helheim/data/2016_cpd_vels"
-lazfile_path = "data/downsampledlazfiles/"
+lazfile_path = "/home/dunbar/Research/helheim/downsampledlazfiles"
 tracks = np.load("data/tracks.npy",allow_pickle=True) # file , point, position
 if(len(tracks.shape)==2):
 	tracks = tracks[np.newaxis,:,:]
@@ -63,14 +63,11 @@ mapping = [(cpd.filepath,laz.filepath) for (cpd,laz) in zip(cpdvels,lazfiles)]
 
 
 
-#print(tracks.shape)
+
 velocities = np.sqrt(tracks[:,:,3]**2 +  tracks[:,:,4]**2 )# + tracks[:,5,:]**2)
 tracks = np.delete(tracks,np.s_[3:6],2)
-print(tracks.shape)
-tracks[:,:,-1] = velocities
-print(tracks[0,:,:])
-#tracks = tracks[:,:,::-1]
 
+tracks[:,:,-1] = velocities
 
 scan_cpd_pairs = []
 for i, (cpd,preds) in enumerate(mapping):
@@ -86,17 +83,17 @@ for i, (cpd,preds) in enumerate(mapping):
 for rasterpath,scanpreds,lazfile in scan_cpd_pairs:
 	print(f"\nOpening {basename(rasterpath)} for: \n {lazfile}\n")
 	raster = Raster(rasterpath)
-	#mask  = ~np.isnan(scanpreds[:,-1])
-	#scanpreds = scanpreds[mask,:]
 
-	print(scanpreds)
+
+	scanpreds = scanpreds[~np.isnan(scanpreds)]
+	
+	scanpreds = np.reshape(scanpreds,(scanpreds.shape[0]//3,3)).astype(np.int)
+
+	
 	cpdvals = 24*np.array(raster.getval(scanpreds[:,:2],1))
+	cpdvals = cpdvals.astype(np.int)
 	preds = scanpreds[:,2][:,np.newaxis]
 
-
-	print(preds.shape)
-	print(cpdvals.shape)
-	#cpdvals = cpdvals[::-1,:]
 
 
 	slope,intercept,r_vl,p_vl,std_err = linregress(preds,cpdvals)
@@ -112,7 +109,7 @@ for rasterpath,scanpreds,lazfile in scan_cpd_pairs:
 	xlin = np.linspace(0,24)
 	ylin = xlin*slope + intercept
 	fig,(ax1,ax2) = plt.subplots(1,2)
-	ax1.plot(xlin,ylin,'b',label='Line of Fit')
+	#ax1.plot(xlin,ylin,'b',label='Line of Fit')
 	ax1.plot(xlin,xlin,'g',label='Y=X')
 	ax1.legend()
 	ax1.scatter(preds,cpdvals,c='r')
