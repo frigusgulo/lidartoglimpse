@@ -27,19 +27,21 @@ class Scan():
 	def radialcluster(self,point,radius):
 
 		# Return a descriptive vector of the radially queried surface points from the scan
-		point_nn = self.tree.query(point,k=1)[1]
-		point_nn = self.points[point_nn,:2]
+		point_nn = np.array(self.tree.data[self.tree.query(point,k=1)[1]])
 
-		locs = self.points[self.tree.query_ball_point(point_nn,radius,n_jobs=-1),:]
-	
-		distances = np.linalg.norm((locs[:,:2] - point_nn),axis=-1)
-		weights = distances/distances.sum()
-		geometricmean = np.average(locs,weights=weights,axis=0)
-		locs -= geometricmean
-		cov = np.cov(locs.T)
-		eigs = np.linalg.eigvals(cov)
-		feats = np.array([eigs[0]-eigs[1],eigs[1]-eigs[2],eigs[2]])/eigs[0]
-		return feats
+		try:
+			locs = self.points[self.tree.query_ball_point( point_nn,radius,n_jobs=-1),:]
+		
+			distances = np.linalg.norm((locs[:,:2] - point),axis=-1)
+			weights = distances/distances.sum()
+			geometricmean = np.average(locs,weights=weights,axis=0)
+			locs -= geometricmean + 1e-300
+			cov = np.cov(locs.T)
+			eigs = np.linalg.eigvals(cov)
+			feats = np.array([eigs[0]-eigs[1],eigs[1]-eigs[2],eigs[2]])/eigs[0]
+			return feats
+		except:
+			print(f"\n Query Failed For {point_nn} with {locs.shape[0]} Points\n")
 
 
 	def downsample(self,filepath,skipinterval,xbounds,ybounds):

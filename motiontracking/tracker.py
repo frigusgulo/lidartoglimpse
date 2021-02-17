@@ -22,8 +22,7 @@ class Tracker:
 
 		self.motionmodel = motionmodel
 		self.refscan = initialscan
-		if self.refscan is not None:
-			self.datetime = self.refscan.datetime
+		self.datetime = self.refscan.datetime
 		self.calibrate = calibrate
 		self.particles = None
 		self.weights = None
@@ -45,7 +44,7 @@ class Tracker:
 		#print(f"Initializing With {self.refscan}\n")
 		self.particles = self.motionmodel.init_particles()
 		if not calibrate:
-			self.reference_feature = self.query_scan(self.refscan,self.motionmodel.xy[:2])#self.gen_clusters(self.particles,self.refscan)
+			self.reference_feature = self.query_scan(self.refscan,self.motionmodel.xy)#self.gen_clusters(self.particles,self.refscan)
 		self.n = self.particles.shape[0]
 		self.weights = np.ones(self.n)/self.n
 
