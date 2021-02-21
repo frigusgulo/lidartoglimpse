@@ -91,7 +91,7 @@ for rasterpath,scanpreds,lazfile in scan_cpd_pairs:
 
 	
 	cpdvals = 24*np.array(raster.getval(scanpreds[:,:2],1))
-	cpdvals = cpdvals.astype(np.int)
+	cpdvals = cpdvals
 	preds = scanpreds[:,2][:,np.newaxis]
 
 

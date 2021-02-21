@@ -3,7 +3,7 @@
 import datetime
 import numpy as np 
 from .scan import Scan 
-
+from concurrent.futures import ThreadPoolExecutor
 class Scanset(Scan):
 	'''
 	A sequence of LiDAR scan observations
@@ -51,5 +51,5 @@ class Scanset(Scan):
 		else:
 			filepath = self.scans[index]
 			print(f"\nInitializing Scan From {filepath}\n")
-			returnscan = Scan(filepath) 
-			return returnscan
+			return Scan(filepath)
+			

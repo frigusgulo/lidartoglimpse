@@ -17,7 +17,7 @@ class CartesianMotion:
 		axyz: float,
 		axyz_sigma: float,
 		DEM,
-		n: int = 5000):
+		n: int = 1000):
 
 		self.n = n
 		self.time_unit = timestep
@@ -54,11 +54,11 @@ class CartesianMotion:
 		"""
 		
 		time_units = dt.total_seconds() / self.time_unit.total_seconds()
-		print(f"\n Filter Time Units: {time_units}\n")
+		#print(f"\n Filter Time Units: {time_units}\n")
 		
 		axyz =  self.axyz + np.array(self.axyz_sigma)*np.random.randn(self.n,3)
 		particles[:, 0:3] += (
-		    time_units *particles[:, 3:6] + 0.5 * (axyz * time_units) ** 2
+		    time_units *particles[:, 3:6] + 0.5 * axyz * (time_units) ** 2
 		)
 		particles[:, 3:6] += time_units * axyz
 

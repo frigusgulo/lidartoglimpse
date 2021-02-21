@@ -2,6 +2,8 @@ import numpy as np
 import datetime
 import sys
 import matplotlib.pyplot as plt
+from scipy.spatial.distance import cdist
+from sklearn.metrics.pairwise import euclidean_distances as dist
 cm = plt.cm.get_cmap('RdYlBu')
 from .motion import CartesianMotion
 from .scanset import Scanset
@@ -29,10 +31,12 @@ class Tracker:
 		self.refclusters = None
 
 		#self.reference_point = np.array([530884.00,7356524.00]) 
-		self.initialize(self.calibrate)
+		self.initialize()
 
 	def query_scan(self,scan: Scan,loc):
-		return scan.radialcluster(point=loc,radius=5)
+		points = scan.radialcluster(point=loc,radius=20)
+
+		return points
 
 	
 	def getfeatures(self,particles,scan: Scan):
@@ -43,8 +47,17 @@ class Tracker:
 	def initialize(self, calibrate=False):
 		#print(f"Initializing With {self.refscan}\n")
 		self.particles = self.motionmodel.init_particles()
-		if not calibrate:
-			self.reference_feature = self.query_scan(self.refscan,self.motionmodel.xy)#self.gen_clusters(self.particles,self.refscan)
+		self.particles_init = self.particles.copy()
+		self.ref_index = np.linspace(0,len(self.particles_init)-1,len(self.particles_init)).astype(int)
+		self.ref_xy = self.motionmodel.xy
+		self.reference_points = self.query_scan(self.refscan,self.motionmodel.xy)
+		l = 0.1
+		sigma2 = 0.01 #Observational Variance
+		self.ref_mean = self.reference_points.mean(axis=0)
+		self.ref_std = self.reference_points.std(axis=0)
+		self.x_train = (self.reference_points - self.ref_mean)/self.ref_std
+		K = np.exp(-dist(self.x_train[:,:2],self.x_train[:,:2],squared=True)/l**2) + sigma2*np.eye(self.x_train.shape[0])
+		self.Kinv = np.linalg.inv(K)
 		self.n = self.particles.shape[0]
 		self.weights = np.ones(self.n)/self.n
 
@@ -55,31 +68,10 @@ class Tracker:
 
 		'''
 
-	def kernel_function(self,test,ref):
-		mean_test = test.points
-		mean_ref = ref.points
-
-		cov_test = test.cov
-		cov_ref = ref.cov
-
-
 		lamb = mean_test[:,None,:] - mean_ref[None,:,:]
 		sigma = np.sum(cov_test[:,None,:] + cov_ref[None,:,:],axis=-1)
 
 
-		#detsig = np.linalg.det(sigma)
-		sigma = np.tril(sigma).flatten()
-		sigma = 1/sigma
-		lamb = np.tril(lamb)
-		lamb = np.sum(lamb.reshape(-1,lamb.shape[-1])**2,axis=-1)
-
-		lengthscale = 0.5
-		A = np.exp((-.5)*lamb*sigma)
-		A /= 1/((2*np.pi**(3/2))*lengthscale**.5)
-		A = np.sum(A)
-		A/= mean_test.shape[0]*mean_ref.shape[0]
-
-		return A
 '''
 
 
@@ -87,6 +79,8 @@ class Tracker:
 
 
 	def scans_likelihood(self, scan: Scan,dt: datetime.timedelta=None):
+		l = 0.1
+		sigma2 = 0.01
 		if dt is not None:
 			self.dt = dt
 		else:
@@ -95,20 +89,33 @@ class Tracker:
 
 	
 		self.datetime = scan.datetime
-		self.refscan = scan
-
 		self.particles = self.motionmodel.evolve_particles(self.particles,self.dt)
-		testfeatures = self.getfeatures(self.particles,scan)
-		log_likelihood = np.linalg.norm((testfeatures-self.reference_feature),axis=-1)
+		delta_0 = self.particles_init[self.ref_index,:2] - self.motionmodel.xy
+		delta_p = self.particles[:,:3] - self.particles_init[self.ref_index,:3]
+		query_clouds = [self.query_scan(scan,self.particles[i,:2]-delta_0[i,:]) - delta_p[i] for i in range(self.particles.shape[0])]
+		query_lls = np.zeros((len(query_clouds)))
+		test_size = min(min(len(q) for q in query_clouds),150)
 
-		return np.array(log_likelihood)
+		for j,query_points in enumerate(query_clouds):
+			rand_ind = np.random.choice(range(len(query_points)),test_size,replace=False)
+			x_test = (query_points[rand_ind] - self.ref_mean)/self.ref_std
+			Kstar = np.exp(-dist(x_test[:,:2],self.x_train[:,:2],squared=True)/l**2)
+			Kss = np.exp(-dist(x_test[:,:2],x_test[:,:2],squared=True)/l**2)
+
+			mu = Kstar @ self.Kinv @ self.x_train[:,2]
+			Sigma = Kss - Kstar @ self.Kinv @ Kstar.T + sigma2*np.eye(Kss.shape[0])
+
+			log_like = -0.5*(np.log(2*np.pi)*x_test.shape[0] + np.linalg.slogdet(Sigma)[1] + 0.5*(x_test[:,2]-mu)@np.linalg.inv(Sigma)@(x_test[:,2]-mu))
+			query_lls[j] = log_like
+
+		w = np.exp(0.2*(query_lls-query_lls.max())) + 1e-300
+		w/=w.sum()
+		return w
 
 
 	
 	def update_weights(self,scan: Scan,dt: datetime.timedelta=None):
-		self.weights = np.exp(-self.scans_likelihood(scan, dt)) + 1e-300
-		self.weights[~np.isnan(self.weights)] *= 1/self.weights[~np.isnan(self.weights)].sum()
-		self.weights[np.isnan(self.weights)] = 0
+		self.weights = self.scans_likelihood(scan, dt) 
 
 
 	def systematic_resample(self):
@@ -120,10 +127,9 @@ class Tracker:
 		self.particles = self.particles[indexes,:]
 		self.weights = self.weights[indexes]
 		self.weights *= 1/self.weights.sum()
-
+		self.ref_index = self.ref_index[indexes]
 
 		posterior = self.particle_mean()
-		self.reference_feature = self.query_scan(self.refscan,posterior[:2])
 		return posterior
 
 
@@ -139,13 +145,11 @@ class Tracker:
 		    cumulative_sum, np.random.random(self.n - len(initial_indexes))
 		)
 		indexes =  np.hstack((initial_indexes, additional_indexes))
-		#post = np.unique(indexes).shape[0] - indexes.shape[0]
-		#print(f"\n Downsampled by {post} Weights\n")
+		self.init_index = self.init_index[indexes]
 		self.particles = self.particles[indexes,:]
 		self.weights = self.weights[indexes]
 		self.weights *= 1/self.weights.sum()
 		posterior = self.particle_mean()
-		self.reference_feature = self.query_scan(self.refscan,posterior[:2])
 		return posterior
 
 	
@@ -154,7 +158,11 @@ class Tracker:
 	def track(self, scan: Scan=None,calibrate: bool = False,dt: datetime.timedelta =None):
 		if calibrate:
 			#print(f"\n Calibrating From {self.refscan}\n")
-			self.particles = self.motionmodel.evolve_particles(self.particles,dt)
+			
+			self.update_weights(self.refscan,dt)
+			posterior = self.systematic_resample()
+
+			'''
 			print(f"\n Variance X: {np.var(self.particles[:,0])} Variance Y: {np.var(self.particles[:,1])}")
 			print(f"\n Variance VX: {np.var(self.particles[:,3])} Variance VY: {np.var(self.particles[:,4])}")
 			x = self.particles[:,0] - np.mean(self.particles[:,0])
@@ -173,6 +181,7 @@ class Tracker:
 			plt.clf()
 			return self.particles
 			#self.rewind()
+			'''
 
 		else:
 			self.update_weights(scan)

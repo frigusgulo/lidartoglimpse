@@ -41,10 +41,10 @@ northing = np.linspace(northdims[0],northdims[1],10).tolist()
 grid = [[x,y] for x in easting for y in northing]
 
 mid = len(grid)//2
-#grid = [grid[mid]]
+grid = grid[:1]
 
 initialscan = Scan(lazfiles[0])
-scanset = Scanset(lazfiles[1:])
+scanset = Scanset(lazfiles[1:5])
 
 # CPD resolution is 15x15 meters per cell
 
@@ -52,51 +52,46 @@ DEM = Raster("/home/dunbar/Research/helheim/data/observations/dem/helheim_wgs84U
 motionparams = {
 	"timestep": datetime.timedelta(days=1),
 	"DEM": DEM,
-	"xy_sigma": np.array([1.5,1.5]),
-	"vxyz": np.array([10,-10,1]),
-	"vxyz_sigma": np.array([3,3,2]),
+	"xy_sigma": np.array([0.1,0.1]),
+	"vxyz": np.array([0,0,0]),
+	"vxyz_sigma": np.array([11,11,0.1]),
 	"axyz": np.array([0,0,0]),
-	"axyz_sigma": np.array([1.5,1.5,.1])
+	"axyz_sigma": np.array([3,3,0.02])
 }
 
+#with ThreadPoolExecutor(max_workers=12) as executor:
+	#trackergrid = [executor.submit(Tracker(CartesianMotion(xy=point,**motionparams),initialscan)) for point in grid]
 
 trackergrid = [Tracker(CartesianMotion(xy=point,**motionparams),initialscan) for point in grid]
 print(f"\n Observing At {len(trackergrid)} Points \n")
 
-'''
 
-Un comment for calibration
 
-calibration_iters = 24
+#Un comment for calibration
+
+calibration_iters = 2**3
 timestep = np.ones(calibration_iters)
+timestep[0::2]*=-1
 timestep = timestep.tolist()
 
 particle_set = []
 tracker = trackergrid[0]
 for time in timestep:
 	dt = datetime.timedelta(hours=time)
-	particles = tracker.track(calibrate=True,dt=dt)
-	particle_set.append(particles)
-
-print(len(particle_set))
-tracks = np.array(tracks)
-particle_set = np.array([ps for ps in particle_set])
-
-print(tracks.shape)
-print(np.unique(particles,axis=0).shape)
+	tracker.track(calibrate=True,dt=dt)
 
 
-np.save("data/calibration_particles",particle_set)
+#np.save("data/calibration_particles",particle_set)
 print(f"\n\n Calibration Complete\n\n")
-'''
+
+
 
 tracks = []
 particle_set = []
 for i in range(len(scanset.scans)):
-
-
 	testscan = scanset.index(i)
-	means,particles = zip(*[tracker.track(scan=testscan) for tracker in trackergrid])
+	means,particles = zip(*[tracker.track(testscan) for tracker in trackergrid])
+	testscan=None
 	tracks.append(means[:])
 	particle_set.append(particles[:])
 

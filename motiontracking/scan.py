@@ -20,28 +20,16 @@ class Scan():
 		
 		self.datetime = filepath.datetime
 
-		#print(f"Instantiating Scan From {self.filepath.filepath}\n")
-	def knn(self,point,k):
-		return self.points[self.tree.query(point,k=k)[1],:]
-
 	def radialcluster(self,point,radius):
 
 		# Return a descriptive vector of the radially queried surface points from the scan
-		point_nn = np.array(self.tree.data[self.tree.query(point,k=1)[1]])
-
-		try:
-			locs = self.points[self.tree.query_ball_point( point_nn,radius,n_jobs=-1),:]
-		
-			distances = np.linalg.norm((locs[:,:2] - point),axis=-1)
-			weights = distances/distances.sum()
-			geometricmean = np.average(locs,weights=weights,axis=0)
-			locs -= geometricmean + 1e-300
-			cov = np.cov(locs.T)
-			eigs = np.linalg.eigvals(cov)
-			feats = np.array([eigs[0]-eigs[1],eigs[1]-eigs[2],eigs[2]])/eigs[0]
-			return feats
-		except:
-			print(f"\n Query Failed For {point_nn} with {locs.shape[0]} Points\n")
+		point_nn = self.tree.data[self.tree.query(point,k=1)[1]]
+		points =  self.tree.query_ball_point(point_nn,radius,n_jobs=-1)
+		minimum = min(1000,len(points))
+		np.random.shuffle(points)
+		points = points[:minimum]
+		points = [int(i) for i in points]
+		return self.points[points]
 
 
 	def downsample(self,filepath,skipinterval,xbounds,ybounds):
