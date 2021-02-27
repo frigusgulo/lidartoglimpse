@@ -4,6 +4,9 @@ import datetime
 import numpy as np 
 from .scan import Scan 
 from concurrent.futures import ThreadPoolExecutor
+import pickle
+import os
+from os.path import splitext
 class Scanset(Scan):
 	'''
 	A sequence of LiDAR scan observations
@@ -32,9 +35,7 @@ class Scanset(Scan):
 			raise ValueError("Scans are not two or greater")
 		if any(scan.datetime is None for scan in self.scans):
 			raise ValueError(f"Scan {i} is missing datetime")
-		if load:
-			self.scans = [Scan(filepath.filepath,skipinterval=self.density) for filepath in self.scans]
-
+	
 		self.scans.sort(key = lambda x: x.datetime)
 		self.date_times = [scan.datetime for scan in self.scans]
 		time_deltas = np.array([dt.total_seconds() for dt in np.diff(self.date_times)])
@@ -46,10 +47,30 @@ class Scanset(Scan):
 		print(f"\n Scanset Spans {days} Days\n")
 
 	def index(self,index) -> Scan:
-		if self.load:
-			return self.scans[index]
+		filepath = self.scans[index]
+		pklfilepath = splitext(filepath.filepath)[0] + "_tree.pkl"
+		if os.path.isfile(pklfilepath):
+			print(f"\nInitializing Scan From {pklfilepath}\n")
+			with open(pklfilepath,'rb') as file:
+				data = pickle.load(file)
+			scan = Scan()
+			scan.tree = data[0]
+			scan.points = data[1]
+			scan.datetime = data[2]
+			return scan
 		else:
-			filepath = self.scans[index]
 			print(f"\nInitializing Scan From {filepath}\n")
 			return Scan(filepath)
+
+	def serialize(self):
+		for scan in self.scans:
+			filepath = splitext(scan.filepath)[0] + "_tree.pkl"
+			if not os.path.isfile(filepath):
+				scanobj = Scan(scan)
+				toserial = [scanobj.tree,scanobj.points,scanobj.datetime]
+				scanobj = None
+				print(f"\nSerializing {filepath}\n")
+				with open(filepath,'wb') as file:
+					pickle.dump(toserial,file)
+	
 			

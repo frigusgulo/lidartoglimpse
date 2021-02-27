@@ -2,33 +2,45 @@ import numpy as np
 import laspy as lp
 import scipy
 from laspy.file import File
-from scipy.spatial.ckdtree import cKDTree as KDTree
+
+from sklearn.neighbors import KDTree 
+import pickle
+from os.path import splitext,isfile
 import time 
 import datetime
 from .filepath import Filepath
 import matplotlib.pyplot as plt
 
 class Scan():
-	def __init__(self,filepath: Filepath):
+	def __init__(self,filepath: Filepath = None):
 
-		self.filepath = filepath
-		self.file = File(self.filepath.filepath,mode="r")
-		self.header = self.file.header
-		self.points = np.vstack([self.file.x, self.file.y, self.file.z]).transpose()
-		self.tree = KDTree(self.points[:,:2])
-		
-		
-		self.datetime = filepath.datetime
+		if filepath is not None:
+			self.filepath = filepath
+			self.file = File(self.filepath.filepath,mode="r")
+			self.header = self.file.header
+			self.points = np.vstack([self.file.x, self.file.y, self.file.z]).transpose()
+			self.tree = KDTree(self.points[:,:2],leaf_size=2**2,metric='euclidean')
+			self.datetime = filepath.datetime
 
-	def radialcluster(self,point,radius):
 
+	def __getstate__(self):
+		return self.__dict__
+
+	def __setstate__(self,data):
+		self.__dict__ = data
+
+	def radialcluster(self,point,radius=15):
+
+		point = np.array(point).flatten().reshape(1,2)
+	
 		# Return a descriptive vector of the radially queried surface points from the scan
-		point_nn = self.tree.data[self.tree.query(point,k=1)[1]]
-		points =  self.tree.query_ball_point(point_nn,radius,n_jobs=-1)
+		dist,ind = self.tree.query(point)
+		point_nn = self.points[int(ind),:2].reshape(1,-1)
+		points =  self.tree.query_radius(point_nn,r=radius)[0]
+		points = points.astype(np.int)
 		minimum = min(1000,len(points))
 		np.random.shuffle(points)
 		points = points[:minimum]
-		points = [int(i) for i in points]
 		return self.points[points]
 
 
@@ -49,19 +61,3 @@ class Scan():
 			plt.scatter(points[:,0].get(),points[:,1].get(),c='g',s=30)
 		plt.show()
 
-
-
-class Particleset():  
-	def __init__(self,points=None,distances=None):
-		self.points = points
-		self.distances = distances
-		self.normalize()
-
-	def normalize(self):
-		weights = self.distances/self.distances.sum()
-		geometricmean = np.average(self.points,weight=weights)
-		self.points -= geometricmean
-		cov = (1/self.points.shape[0])*self.points@self.points.T
-		self.eigs = np.linalg.eig(cov,homogeneous_eigvals=True)
-		self.feats = np.array([self.eigs[0]-self.eigs[1],self.eigs[1]-self.eigs[2],self.eigs[2]])/self.eigs[0]
-		self.descriptor = np.hstack((self.eigs,self.feats))
