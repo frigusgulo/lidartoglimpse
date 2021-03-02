@@ -1,16 +1,18 @@
 import numpy as np 
+import cupy 
 import datetime
 import sys
 import matplotlib.pyplot as plt
-from scipy.spatial.distance import cdist
-from sklearn.metrics.pairwise import euclidean_distances as dist
+from sklearn.metrics import pairwise_distances as dist
+from itertools import combinations
 cm = plt.cm.get_cmap('RdYlBu')
 from .motion import CartesianMotion
 from .scanset import Scanset
 from .raster import Raster
 from .filepath import Filepath
-from .scan import Scan, Particleset
+from .scan import Scan
 from .scanset import Scanset 
+import time
 
 class Tracker:
 
@@ -21,7 +23,6 @@ class Tracker:
 		initialscan: Scan = None,
 		calibrate: bool = False):
 
-
 		self.motionmodel = motionmodel
 		self.refscan = initialscan
 		self.datetime = self.refscan.datetime
@@ -30,52 +31,49 @@ class Tracker:
 		self.weights = None
 		self.refclusters = None
 
-		#self.reference_point = np.array([530884.00,7356524.00]) 
 		self.initialize()
 
-	def query_scan(self,scan: Scan,loc):
-		points = scan.radialcluster(point=loc,radius=20)
-
-		return points
-
-	
-	def getfeatures(self,particles,scan: Scan):
-		features = [self.query_scan(scan,particles[i,:2]) for i in range(self.particles.shape[0])]
-		return np.array(features)
-
-	
 	def initialize(self, calibrate=False):
 		#print(f"Initializing With {self.refscan}\n")
 		self.particles = self.motionmodel.init_particles()
 		self.particles_init = self.particles.copy()
 		self.ref_index = np.linspace(0,len(self.particles_init)-1,len(self.particles_init)).astype(int)
-		self.ref_xy = self.motionmodel.xy
-		self.reference_points = self.query_scan(self.refscan,self.motionmodel.xy)
-		l = 0.1
-		sigma2 = 0.01 #Observational Variance
+		self.reference_points = self.refscan[self.refscan.query(self.motionmodel.xy,10),:]
+		l = 0.2
+		sigma2 = 0.02 #Observational Variance
 		self.ref_mean = self.reference_points.mean(axis=0)
 		self.ref_std = self.reference_points.std(axis=0)
 		self.x_train = (self.reference_points - self.ref_mean)/self.ref_std
-		K = np.exp(-dist(self.x_train[:,:2],self.x_train[:,:2],squared=True)/l**2) + sigma2*np.eye(self.x_train.shape[0])
+		K = np.exp(-dist(self.x_train[:,:2],self.x_train[:,:2],metric='euclidean')/l**2)+ sigma2*np.eye(self.x_train.shape[0])
 		self.Kinv = np.linalg.inv(K)
-		self.n = self.particles.shape[0]
+		self.n = self.motionmodel.n
 		self.weights = np.ones(self.n)/self.n
+
 
 	def particle_mean(self)-> np.ndarray:
 		"Weighted Particle Mean [x, y, z, vx, vy, vz]"
 		return np.average(self.particles, weights=self.weights, axis=0)		
 		
 
-		'''
+	def pointset_to_distmat(self,scan,pointset):
+		start = time.time()
+		pointset = scan.points[np.array(pointset)]
+		mat =  dist(pointset,pointset,metric='euclidean')**2
+		print(f"\n KSS Took {time.time()-start} Seconds For {mat.shape} Matrix")
+		return mat
 
-		lamb = mean_test[:,None,:] - mean_ref[None,:,:]
-		sigma = np.sum(cov_test[:,None,:] + cov_ref[None,:,:],axis=-1)
+	def pairs2mat(self,distances,n):
+		# restructure permuations into symmetric array
+		a = np.zeros((n,n))
+		triu = np.triu_indices(n,+1)
+		tril = np.tril_indices(n)
+		a[triu] = distances
+		a[tril] = a.T[tril]
+		return a
 
-
-'''
-
-
-
+	def process_points(self,scan,cloudset:list,pointset: set,particles):
+		cloudset.append(scan.query(particles,radius=10))
+		pointset |= set(cloudset[-1])
 
 
 	def scans_likelihood(self, scan: Scan,dt: datetime.timedelta=None):
@@ -92,21 +90,39 @@ class Tracker:
 		self.particles = self.motionmodel.evolve_particles(self.particles,self.dt)
 		delta_0 = self.particles_init[self.ref_index,:2] - self.motionmodel.xy
 		delta_p = self.particles[:,:3] - self.particles_init[self.ref_index,:3]
-		query_clouds = [self.query_scan(scan,self.particles[i,:2]-delta_0[i,:]) - delta_p[i] for i in range(self.particles.shape[0])]
-		query_lls = np.zeros((len(query_clouds)))
-		test_size = min(min(len(q) for q in query_clouds),150)
+		
+		pointset = set()
+		testclouds = []
+		start = time.time()
+		[self.process_points(scan,testclouds,pointset,particle) for particle in list(self.particles[:,:2]-delta_0[:,:])]
+		print(f"\n Test Clouds Queried in {time.time()-start} Seconds\n")
+		pointset = list(pointset)
+		distmat = self.pointset_to_distmat(scan,pointset)
+		distmat = np.exp(-distmat/(l**2))
+	
+		particle_loglikelihoods = np.zeros((len(testclouds)))
 
-		for j,query_points in enumerate(query_clouds):
-			rand_ind = np.random.choice(range(len(query_points)),test_size,replace=False)
-			x_test = (query_points[rand_ind] - self.ref_mean)/self.ref_std
-			Kstar = np.exp(-dist(x_test[:,:2],self.x_train[:,:2],squared=True)/l**2)
-			Kss = np.exp(-dist(x_test[:,:2],x_test[:,:2],squared=True)/l**2)
+		for j,testcloud in enumerate(testclouds):
+			x_test = scan.points[testcloud] - delta_p[j]
+			x_test = (x_test - self.ref_mean)/self.ref_std
+
+			inds = [pointset.index(i) for i in testcloud]
+			distances = np.array([distmat[pair] for pair in combinations(inds,r=2)])
+
+	
+			
+			Kss = self.pairs2mat(distances,len(inds))
+
+			Kstar = np.exp(-dist(x_test[:,:2],self.x_train[:,:2],metric='euclidean')**2/l**2)
 
 			mu = Kstar @ self.Kinv @ self.x_train[:,2]
 			Sigma = Kss - Kstar @ self.Kinv @ Kstar.T + sigma2*np.eye(Kss.shape[0])
 
+			mu = mu
+			Sigma = Sigma
+
 			log_like = -0.5*(np.log(2*np.pi)*x_test.shape[0] + np.linalg.slogdet(Sigma)[1] + 0.5*(x_test[:,2]-mu)@np.linalg.inv(Sigma)@(x_test[:,2]-mu))
-			query_lls[j] = log_like
+			particle_loglikelihoods[j] = log_like
 
 		w = np.exp(0.2*(query_lls-query_lls.max())) + 1e-300
 		w/=w.sum()

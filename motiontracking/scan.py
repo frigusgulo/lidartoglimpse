@@ -10,6 +10,7 @@ import time
 import datetime
 from .filepath import Filepath
 import matplotlib.pyplot as plt
+from numpy.random import choice
 
 class Scan():
 	def __init__(self,filepath: Filepath = None):
@@ -22,26 +23,14 @@ class Scan():
 			self.tree = KDTree(self.points[:,:2],leaf_size=2**2,metric='euclidean')
 			self.datetime = filepath.datetime
 
+	def __getitem__(self,indices):
+		return self.points[indices]
 
-	def __getstate__(self):
-		return self.__dict__
-
-	def __setstate__(self,data):
-		self.__dict__ = data
-
-	def radialcluster(self,point,radius=15):
-
+	def query(self,point,radius):
 		point = np.array(point).flatten().reshape(1,2)
-	
-		# Return a descriptive vector of the radially queried surface points from the scan
-		dist,ind = self.tree.query(point)
-		point_nn = self.points[int(ind),:2].reshape(1,-1)
-		points =  self.tree.query_radius(point_nn,r=radius)[0]
-		points = points.astype(np.int)
-		minimum = min(1000,len(points))
-		np.random.shuffle(points)
-		points = points[:minimum]
-		return self.points[points]
+		pointset =  self.tree.query_radius(point,r=radius)[0]
+		return choice(pointset,size=min(len(pointset),700),replace=False).astype(np.int)
+
 
 
 	def downsample(self,filepath,skipinterval,xbounds,ybounds):
