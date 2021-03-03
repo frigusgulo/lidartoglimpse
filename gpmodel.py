@@ -37,12 +37,13 @@ easting = np.linspace(eastdims[0],eastdims[1],10).tolist()
 northing = np.linspace(northdims[0],northdims[1],10).tolist()
 grid = [[x,y] for x in easting for y in northing]
 
-clusters = [scan.points[scan.query(point,radius=15)] for point in grid]
-clusters = [(cluster-np.mean(cluster))/(np.std(cluster)) for cluster in clusters]
+clusters = [scan.points[scan.query(point,radius=15)]   for point in grid]
+#clusters = [(cluster - np.mean(cluster,axis=0))/np.std(cluster,axis=0) for cluster in clusters]
+train_x = torch.tensor(clusters[1][:,:2],dtype=torch.float)
+train_y = torch.tensor(clusters[1][:,-1],dtype=torch.float)
 
-
-train_x = torch.tensor(np.vstack([cluster[:,0:2] for cluster in clusters]))
-train_y = torch.tensor(np.vstack([cluster[:,-1:] for cluster in clusters]))
+#train_x = torch.tensor(np.vstack([cluster[:,0:2] for cluster in clusters]))
+#train_y = torch.tensor(np.vstack([cluster[:,-1:] for cluster in clusters]))
 
 
 print("Length of training data: {}".format(len(train_x)))
@@ -60,42 +61,41 @@ likelihood.train()
 # Use the adam optimizer
 optimizer = torch.optim.Adam([
     {'params': model.parameters()},  # Includes GaussianLikelihood parameters
-], lr=1e-3)
+], lr=1e-2)
 
 # "Loss" for GPs - the marginal log likelihood
 mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-
+'''
 loader = Data.DataLoader(
 	dataset = dataset,
-	batch_size=10,
-	shuffle=True,
+	batch_size=2**16,
 	num_workers=12)
+'''
 
 
-
-training_iter = 400
+training_iter = 1000
 
 settings = gpytorch.settings.debug(state=False)
 
 with settings:
 	for i in range(training_iter):
 		# Zero gradients from previous iteration
-		for step,(x,y) in enumerate(loader):
+		#for step,(x,y) in enumerate(loader):
 			 
-			output = model(x)
-			loss = -mll(output, y)
-			optimizer.zero_grad()
-			loss.mean().backward()
-			optimizer.step()
+		output = model(train_x)
+		loss = -mll(output, train_y)
+		optimizer.zero_grad()
+		loss.backward()
+		optimizer.step()
 		
-		
-		print('Iter %d/%d - Loss: %.3f   lengthscale: %.3f   noise: %.3f   outputscale: %.3f' % (
-		    i + 1, training_iter, loss.mean().item(),
-		    model.covar_module.base_kernel.lengthscale.item(),
-		    #model.covar_module.scale_kernel.outputscale.item(),
-		    model.likelihood.noise.item(),
-		    model.covar_module.raw_outputscale.item()
-		))
+		if i% 10 ==0:
+			print('Iter %d/%d - Loss: %.3f   lengthscale: %.3f   noise: %.3f   outputscale: %.3f' % (
+			    i + 1, training_iter, loss.mean().item(),
+			    model.covar_module.base_kernel.lengthscale.item(),
+			    #model.covar_module.scale_kernel.outputscale.item(),
+			    model.likelihood.noise.item(),
+			    model.covar_module.raw_outputscale.item()
+			))
 
 for param_name, param in model.named_parameters():
     print(f'Parameter name: {param_name:42} value = {param.item()}')
