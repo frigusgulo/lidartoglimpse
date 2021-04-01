@@ -2,6 +2,7 @@ import numpy as np
 import laspy as lp
 import scipy
 from laspy.file import File
+from scipy.spatial import ConvexHull
 
 from sklearn.neighbors import KDTree 
 import pickle
@@ -13,7 +14,7 @@ import matplotlib.pyplot as plt
 from numpy.random import choice
 
 class Scan():
-	def __init__(self,filepath: Filepath = None):
+	def __init__(self,filepath: Filepath = None,build_tree=True):
 
 		if filepath is not None:
 			self.filepath = filepath
@@ -26,11 +27,17 @@ class Scan():
 	def __getitem__(self,indices):
 		return self.points[indices]
 
-	def query(self,point,radius):
+	def query(self,point,radius,maxpoints=1000,calibrate=False):
 		point = np.array(point).flatten().reshape(1,2)
+		#return self.tree.query(point,return_distance=False,k=25)[0]
 		pointset =  self.tree.query_radius(point,r=radius)[0]
-		return choice(pointset,size=min(len(pointset),700),replace=False).astype(np.int)
+	
+		if calibrate or len(pointset) >= maxpoints/6 :
+			return pointset
 
+		else:
+			return self.tree.query(point,return_distance=False,k=int(maxpoints//5))[0]
+			
 
 
 	def downsample(self,filepath,skipinterval,xbounds,ybounds):
@@ -49,4 +56,12 @@ class Scan():
 		if points is not None:
 			plt.scatter(points[:,0].get(),points[:,1].get(),c='g',s=30)
 		plt.show()
+
+	def convexhull(self,vertices=True):
+		if vertices:
+			return ConvexHull(self.points).vertices
+		else:
+			return ConvexHull(self.points)
+
+		# pass to glimpse.raster.rasterize_polygons()
 

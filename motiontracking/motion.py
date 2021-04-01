@@ -17,7 +17,7 @@ class CartesianMotion:
 		axyz: float,
 		axyz_sigma: float,
 		DEM,
-		n: int = 1000):
+		n: int = 3000):
 
 		self.n = n
 		self.time_unit = timestep
@@ -42,6 +42,7 @@ class CartesianMotion:
 		elevs = np.array(self.DEM.getval(particles[:,0:2]))
 		particles[:,2] = elevs
 		particles[:, 3:6] = np.array(self.vxyz) +np.array(self.vxyz_sigma)*np.random.randn(self.n,3)
+		#particles[:,3] = 10 # temp; experiment with fixed x velocity
 		return particles
 
 
@@ -57,9 +58,9 @@ class CartesianMotion:
 		#print(f"\n Filter Time Units: {time_units}\n")
 		
 		axyz =  self.axyz + np.array(self.axyz_sigma)*np.random.randn(self.n,3)
+
 		particles[:, 0:3] += (
-		    time_units *particles[:, 3:6] + 0.5 * axyz * (time_units) ** 2
+		    time_units *particles[:, 3:6] + 0.5 * axyz * (time_units ** 2)
 		)
 		particles[:, 3:6] += time_units * axyz
-
 		return particles

@@ -10,4 +10,8 @@ class Filepath:
 		filename =  splitext( basename(filepath) )[0].replace("_","")
 		dateobj = [int(filename[i:i+2]) for i in range(0,len(filename),2)] # year, month,day,hour,min,sec
 
-		self.datetime = datetime.datetime(dateobj[0],dateobj[1],dateobj[2],dateobj[3],dateobj[4],dateobj[5],0)	
+		self.datetime = datetime.datetime(2000+dateobj[0],dateobj[1],dateobj[2],dateobj[3],dateobj[4],dateobj[5],0)	
+
+	def retdatetime(self):
+		print(self.datetime)
+		return self.datetime

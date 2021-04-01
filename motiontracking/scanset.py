@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pickle
 import os
 from os.path import splitext
+from sklearn.neighbors import KDTree 
 class Scanset(Scan):
 	'''
 	A sequence of LiDAR scan observations
@@ -46,21 +47,23 @@ class Scanset(Scan):
 		days = span.days
 		print(f"\n Scanset Spans {days} Days\n")
 
-	def index(self,index) -> Scan:
+
+	def index(self,index,from_serial=True,build_tree=True) -> Scan:
 		filepath = self.scans[index]
 		pklfilepath = splitext(filepath.filepath)[0] + "_tree.pkl"
-		if os.path.isfile(pklfilepath):
+		if os.path.isfile(pklfilepath) and from_serial:
 			print(f"\nInitializing Scan From {pklfilepath}\n")
+			scan = Scan()
 			with open(pklfilepath,'rb') as file:
 				data = pickle.load(file)
-			scan = Scan()
+			
 			scan.tree = data[0]
 			scan.points = data[1]
 			scan.datetime = data[2]
 			return scan
 		else:
 			print(f"\nInitializing Scan From {filepath}\n")
-			return Scan(filepath)
+			return Scan(filepath,build_tree)
 
 	def serialize(self):
 		for scan in self.scans:

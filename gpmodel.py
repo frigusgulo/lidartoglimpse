@@ -14,8 +14,8 @@ class ExactGPModel(gpytorch.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood):
         super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean()
-        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
-
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.MaternKernel(nu=5/2))
+        #self.covar_module = gpytorch.kernels.RBFKernel()
     def forward(self, x):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
@@ -37,21 +37,21 @@ easting = np.linspace(eastdims[0],eastdims[1],10).tolist()
 northing = np.linspace(northdims[0],northdims[1],10).tolist()
 grid = [[x,y] for x in easting for y in northing]
 
-clusters = [scan.points[scan.query(point,radius=15)]   for point in grid]
-#clusters = [(cluster - np.mean(cluster,axis=0))/np.std(cluster,axis=0) for cluster in clusters]
-train_x = torch.tensor(clusters[1][:,:2],dtype=torch.float)
-train_y = torch.tensor(clusters[1][:,-1],dtype=torch.float)
+clusters = [scan.points[scan.query(point,radius=5.56)] for point in grid]
+clusters = clusters[1::10]
+clusters = [(cluster - np.mean(cluster,axis=0))/np.std(cluster,axis=0) for cluster in clusters]
 
-#train_x = torch.tensor(np.vstack([cluster[:,0:2] for cluster in clusters]))
-#train_y = torch.tensor(np.vstack([cluster[:,-1:] for cluster in clusters]))
 
+train_x = torch.tensor(np.vstack([cluster[:,0:2] for cluster in clusters]),dtype=torch.float).to(device)
+train_y = torch.tensor(np.hstack([cluster[:,2] for cluster in clusters]),dtype=torch.float).to(device)
+print(train_y.shape)
 
 print("Length of training data: {}".format(len(train_x)))
 
 # initialize likelihood and model
-dataset = Data.TensorDataset(train_x,train_y)
-likelihood = gpytorch.likelihoods.GaussianLikelihood()
-model = ExactGPModel(train_x, train_y, likelihood)
+
+likelihood = gpytorch.likelihoods.GaussianLikelihood().to(device)
+model = ExactGPModel(train_x, train_y, likelihood).to(device)
 
 #print(model.covar_module.ScaleKernel.outputscale())
 # Find optimal model hyperparameters
@@ -73,30 +73,26 @@ loader = Data.DataLoader(
 '''
 
 
-training_iter = 1000
+training_iter = 2000
 
-settings = gpytorch.settings.debug(state=False)
 
-with settings:
-	for i in range(training_iter):
-		# Zero gradients from previous iteration
-		#for step,(x,y) in enumerate(loader):
-			 
-		output = model(train_x)
-		loss = -mll(output, train_y)
-		optimizer.zero_grad()
-		loss.backward()
-		optimizer.step()
-		
-		if i% 10 ==0:
-			print('Iter %d/%d - Loss: %.3f   lengthscale: %.3f   noise: %.3f   outputscale: %.3f' % (
-			    i + 1, training_iter, loss.mean().item(),
-			    model.covar_module.base_kernel.lengthscale.item(),
-			    #model.covar_module.scale_kernel.outputscale.item(),
-			    model.likelihood.noise.item(),
-			    model.covar_module.raw_outputscale.item()
-			))
 
+#with gpytorch.settings.debug(state=False),gpytorch.settings.max_cg_iterations(10000), gpytorch.settings.cg_tolerance(2):
+for i in range(training_iter):
+
+	optimizer.zero_grad()	 
+	output = model(train_x)
+	loss = -mll(output, train_y)
+	
+	loss.mean().backward()
+	optimizer.step()
+	
+	if i% 100 ==0:
+	    print('Iter %d/%d - Loss: %.3f   lengthscale: %.3f   noise: %.3f' % (
+    i + 1, training_iter, loss.item(),
+    model.covar_module.base_kernel.lengthscale.item(),
+    model.likelihood.noise.item()
+))
 for param_name, param in model.named_parameters():
     print(f'Parameter name: {param_name:42} value = {param.item()}')
 
