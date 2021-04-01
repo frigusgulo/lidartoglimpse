@@ -32,11 +32,11 @@ class Scan():
 		#return self.tree.query(point,return_distance=False,k=25)[0]
 		pointset =  self.tree.query_radius(point,r=radius)[0]
 	
-		if calibrate or len(pointset) >= maxpoints/6 :
+		if calibrate :#or len(pointset) >= maxpoints/7 :
 			return pointset
 
 		else:
-			return self.tree.query(point,return_distance=False,k=int(maxpoints//5))[0]
+			return pointset#self.tree.query(point,return_distance=False,k=int(maxpoints//2))[0]
 			
 
 

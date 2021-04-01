@@ -133,16 +133,21 @@ class Tracker:
 
 		for i,testcloud in enumerate(testclouds):
 			x_test = scan.points[np.array(testcloud)] - delta_p[i,:]
-			x_test = self.normalize(x_test)
-			Kss = self.kernel(x_test[:,:2])
-			Kstar = self.kernel(x_test[:,:2],self.x_train[:,:2])
-			mu = Kstar @ self.premu
-			Sigma = Kss - Kstar @ self.Kinv @ Kstar.T + self.sigma2*np.eye(Kss.shape[0])
-			log_like = -0.5*(np.log(2*np.pi)*x_test.shape[0] ) + np.linalg.slogdet(Sigma)[1] +0.5*(x_test[:,2]-mu)@np.linalg.inv(Sigma)@(x_test[:,2]-mu).T
-			particle_loglike.append(log_like)
+			if max(x_test.shape) >= self.points//12:
+				x_test = self.normalize(x_test)
+				Kss = self.kernel(x_test[:,:2])
+				Kstar = self.kernel(x_test[:,:2],self.x_train[:,:2])
+				mu = Kstar @ self.premu
+				Sigma = Kss - Kstar @ self.Kinv @ Kstar.T + self.sigma2*np.eye(Kss.shape[0])
+				log_like = -0.5*(np.log(2*np.pi)*x_test.shape[0] ) + np.linalg.slogdet(Sigma)[1] +0.5*(x_test[:,2]-mu)@np.linalg.inv(Sigma)@(x_test[:,2]-mu).T
+				particle_loglike.append(log_like)
+			else:
+				particle_loglike.append(np.nan)
 
 		particle_loglike = np.array(particle_loglike)
-		w = np.exp(0.5*(particle_loglike-particle_loglike.max())) + 1e-300
+		particle_loglike[np.isnan(particle_loglike)] = np.nanmin(particle_loglike)
+		w = np.exp((particle_loglike-particle_loglike.max())) + 1e-300
+
 		w/=w.sum()
 		return w
 
