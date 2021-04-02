@@ -42,8 +42,8 @@ class Tracker:
 		self.timestep_set = []
 		self.initialize()
 
-	def optimal_radius(self,points=120):
-		for i in np.linspace(5,21,20).tolist():
+	def optimal_radius(self,points=110):
+		for i in np.linspace(4,20,100).tolist():
 			if max(self.refscan.query(self.motionmodel.xy,i,calibrate=True).shape)>=points:
 				self.radius= i
 				print(f"Optimal Radius Is {self.radius} For {self.motionmodel.xy}\n")
@@ -57,13 +57,16 @@ class Tracker:
 		cutoff = np.percentile(elevs,40,axis=0)
 		keep = np.squeeze(np.argwhere(elevs < cutoff))
 		array = array[keep,:]
+		#size = int(max(array.shape))
+		#inds = np.random.choice(np.arange(size),size=int(size//2),replace=False)
 		return (array-mean)/std
 
 	def initialize(self, calibrate=False):
 		self.timecounter=0
 		self.optimal_radius()
-		length_scale = self.radius/70
-		self.kernel = Matern(length_scale=length_scale,nu=5/2)
+		length_scale = self.radius/65
+		print(f"Lengthscale : {length_scale}")
+		self.kernel = Matern(length_scale=length_scale,nu=5)
 		self.particles = self.motionmodel.init_particles()
 		self.particles_init = self.particles.copy()
 		self.ref_index = np.linspace(0,len(self.particles_init)-1,len(self.particles_init)).astype(int)
@@ -90,7 +93,7 @@ class Tracker:
 		self.refscan = scan
 		self.optimal_radius()
 		length_scale = self.radius/70
-		self.kernel = Matern(length_scale=length_scale,nu=5/2)
+		self.kernel = Matern(length_scale=length_scale,nu=4)
 		prior = self.particles.copy()
 		self.particles = self.motionmodel.init_particles()
 		self.particles[:,3:] = prior[:,3:]
@@ -130,10 +133,11 @@ class Tracker:
 		testclouds = [scan.query(point,self.radius,maxpoints=self.points) for point in list(self.particles[:,:2]) - delta_0]
 		particle_loglike = []
 		start = time.time()
-
+		self.counter = 0
 		for i,testcloud in enumerate(testclouds):
 			x_test = scan.points[np.array(testcloud)] - delta_p[i,:]
-			if max(x_test.shape) >= self.points//12:
+			if max(x_test.shape) > self.points//4:
+				self.counter += 1
 				x_test = self.normalize(x_test)
 				Kss = self.kernel(x_test[:,:2])
 				Kstar = self.kernel(x_test[:,:2],self.x_train[:,:2])
@@ -146,16 +150,20 @@ class Tracker:
 
 		particle_loglike = np.array(particle_loglike)
 		particle_loglike[np.isnan(particle_loglike)] = np.nanmin(particle_loglike)
-		w = np.exp((particle_loglike-particle_loglike.max())) + 1e-300
-
+		w = np.exp((particle_loglike-particle_loglike.max()))
+		w[np.isnan(w)] = 0
+		w+= 1e-300
 		w/=w.sum()
 		return w
 
 
 	
 	def update_weights(self,scan: Scan,dt: datetime.timedelta=None):
-		self.weights = self.scans_likelihood(scan, dt)
-
+		weights = self.scans_likelihood(scan, dt)
+		if self.counter >= self.n//15:
+			self.weights = weights 
+		else:
+			print(f"Old Weights Kept")
 		self.weight_set.append(self.weights)
 
 	def systematic_resample(self):
@@ -206,20 +214,22 @@ class Tracker:
 			self.update_weights(scan)
 			posterior = self.systematic_resample()
 
-			if self.timecounter >= 4:
-				self.re_initialize(scan)
+			#if self.timecounter >= 4:
+				#self.re_initialize(scan)
 
 			self.posterior_set.append(posterior)
 			self.particle_set.append(self.particles)
 			self.covariance_set.append(self.particle_covariance())
-			#try:
-			print("===================================")
-			print(f"Posterior Velocity Vector: {self.posterior_set[-1][3:5]}\n")
-			#print(f"Posterior Displacement: {(self.dt.total_seconds()/(3600*24))*np.linalg.norm(self.posterior_set[-1][:2] - self.posterior_set[-2][:2])}")
-			print(f"Posterior Velocity: {np.sqrt(self.posterior_set[-1][3]**2 +self.posterior_set[-1][4]**2 )}")
-			print(f"Test Velocity: {24*self.testdem.dem.read(1)[self.testdem.index(self.posterior_set[-2][:2])]}\n")
-			print(f"Raidus: {self.radius}")
-			#self.rewind()
-			#except:
-				#pass
+			try:
+				print("===================================")
+				print(f"Posterior Velocity Vector: {self.posterior_set[-1][3:5]}\n")
+				#print(f"Posterior Displacement: {(self.dt.total_seconds()/(3600*24))*np.linalg.norm(self.posterior_set[-1][:2] - self.posterior_set[-2][:2])}")
+				print(f"Posterior Velocity: {np.sqrt(self.posterior_set[-1][3]**2 +self.posterior_set[-1][4]**2 )}")
+				print(f"Test Velocity: {24*self.testdem.dem.read(1)[self.testdem.index(self.posterior_set[-2][:2])]}\n")
+				print(f"Raidus: {self.radius}")
+				print(f"Effective Particles {100*(self.counter/self.n)}")
+				#print(f"Covariance: {np.diagonal(self.particle_covariance())}")
+				#self.rewind()
+			except:
+				pass
 			

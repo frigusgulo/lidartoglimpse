@@ -39,7 +39,7 @@ northdims = (np.minimum(diagupp[1],diaglow[1]),np.maximum(diagupp[1],diaglow[1])
 
 easting = np.linspace(eastdims[0],eastdims[1],8).tolist()
 northing = np.linspace(northdims[0],northdims[1],8).tolist()
-grid = [[x,y] for x in easting for y in northing]#[:1]
+grid = [[x,y] for x in easting for y in northing]#[:8]
 
 #grid = grid[::1]
 
@@ -54,10 +54,10 @@ motionparams = {
 	"DEM": DEM,
 	"xy_sigma": np.array([.1,.1]),
 	"vxyz": np.array([10,-5,0]),
-	"vxyz_sigma": np.array([6,6,0.1]),
+	"vxyz_sigma": np.array([6,3,0.1]),
 	"axyz": np.array([0,0,0]),
 	"axyz_sigma": np.array([3,3,0.02]),
-	"n": 2000
+	"n": 1000
 }
 
 #with ThreadPoolExecutor(max_workers=12) as executor:
