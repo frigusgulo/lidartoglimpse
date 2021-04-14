@@ -16,7 +16,7 @@ from .scan import Scan
 from .scanset import Scanset 
 import time
 import cv2
-
+import glimpse
 
 class Tracker:
 
@@ -49,7 +49,7 @@ class Tracker:
 		self.initialize()
 
 	def optimal_radius(self,points=220):
-		for i in np.arange(4,20,0.15).tolist():
+		for i in np.arange(3,20,0.15).tolist():
 			if max(self.refscan.query(self.motionmodel.xy,i,calibrate=True).shape)>=points:
 				self.radius= i
 				print(f"Optimal Radius Is {self.radius} For {self.motionmodel.xy}")
@@ -70,7 +70,7 @@ class Tracker:
 		array = (array-mean)/std
 
 		elevs = np.abs(array[:,2])
-		cutoff = np.percentile(elevs,25,axis=0)
+		cutoff = np.percentile(elevs,40,axis=0)
 		#cutoff = std[-1]
 		keep = np.squeeze(np.argwhere(elevs < cutoff))
 		array = array[keep,:]
@@ -111,6 +111,7 @@ class Tracker:
 	def image_likelihood(self,image):
 		if self.templateimage:
 			self.dt = image.datetime - self.datetime
+			self.datetime = image.datetime
 			self.particles = self.motionmodel.evolve_particles(self.particles,self.dt)
 			self.get_images(self.particles)
 			image_sse = self.image_sse()
@@ -124,8 +125,9 @@ class Tracker:
 	def initialize(self, calibrate=False):
 		self.timecounter=0
 		self.optimal_radius()
-		self.length_scale = .17
-		self.sigma2 = 0.33
+		#self.length_scale = .17
+		self.length_scale = 1/self.radius
+		self.sigma2 = 2.5/self.radius
 		self.alpha = 10
 		#print(f"Lengthscale : {self.length_scale} | Obsvar : {self.sigma2} | Alpha : {self.alpha}")
 		self.kernel = Matern(length_scale=self.length_scale,nu=0.5) #MSE was about 3.4
@@ -152,20 +154,16 @@ class Tracker:
 		self.covariance_set.append(self.particle_covariance())
 
 	def re_initialize(self,scan):
-		print("Re-initializing")
 		self.timecounter=0
 		self.refscan = scan
-		self.optimal_radius()
-	
 		prior = self.particle_mean()
-		self.particles = self.motionmodel.init_particles(prior=prior)
-		
-		
+		self.particles[:,:2] = self.motionmodel.xy
 		self.reference_points = self.refscan[self.refscan.query(self.motionmodel.xy,self.radius,maxpoints=self.points)]
 		self.x_train = self.normalize(self.reference_points,self.motionmodel.xy)
 		K = self.kernel(self.x_train[:,:2])+ self.sigma2*np.eye(self.x_train.shape[0])
 		self.Kinv = np.linalg.inv(K)
 		self.premu = self.Kinv @ self.x_train[:,2]
+
 	
 	def particle_mean(self)-> np.ndarray:
 		"Weighted Particle Mean [x, y, z, vx, vy, vz]"
@@ -197,7 +195,7 @@ class Tracker:
 			x_test_pre = scan.points[np.array(testcloud)] #- delta_p[i,:]
 			#print(f"Normalization: {x_test_pre.shape} --> {x_test.shape}")
 			
-			if x_test_pre.shape[0] > self.points//11:
+			if x_test_pre.shape[0] > self.points//13:
 				x_test = self.normalize(x_test_pre,self.particles[i,:2])
 				self.counter += 1
 				Kss = self.kernel(x_test[:,:2])
@@ -211,7 +209,7 @@ class Tracker:
 				particle_loglike.append(np.nan)
 
 		particle_loglike = np.array(particle_loglike)
-		particle_loglike[np.isnan(particle_loglike)] = np.nanmean(particle_loglike)
+		particle_loglike[np.isnan(particle_loglike)] = np.nanmin(particle_loglike)
 		w = np.exp((particle_loglike-particle_loglike.max()))
 
 		w[np.isnan(w)] = 0
@@ -271,45 +269,47 @@ class Tracker:
 	
 
 
-	def track(self, scan: Scan=None,image=None,calibrate: bool = False,dt: datetime.timedelta =None):
+	def track(self, observation ,calibrate: bool = False,dt: datetime.timedelta =None):
+	
 		if calibrate:
 			#print(f"\n Calibrating From {self.refscan}\n")
 			
 			self.update_weights(self.refscan,dt)
 			posterior = self.systematic_resample()
 
-		else:
-			if image is not None:
-				self.image_likelihood(image)
-			if scan is not None:
-				self.scans_like.append(self.scans_likelihood(scan))
-				self.update_weights()
+		if isinstance(observation,glimpse.Image):
+			self.image_likelihood(observation)
 
-			posterior = self.systematic_resample()
 
-			if self.timecounter >= 4:
-				self.re_initialize(scan)
+		elif isinstance(observation,Scan):
+			self.scans_like.append(self.scans_likelihood(observation))
 
-			self.posterior_set.append(posterior)
-			self.particle_set.append(self.particles)
-			self.covariance_set.append(self.particle_covariance())
-			try:
-				print("===================================")
-				#print(f"Posterior Velocity Vector: {self.posterior_set[-1][3:5]}\n")
-				#print(f"Posterior Displacement: {(self.dt.total_seconds()/(3600*24))*np.linalg.norm(self.posterior_set[-1][:2] - self.posterior_set[-2][:2])}")
-				postvel = np.sqrt(self.posterior_set[-1][3]**2 +self.posterior_set[-1][4]**2 )
-				testvel = 24*self.testdem.dem.read(1)[self.testdem.index(self.posterior_set[-2][:2])]
+		self.update_weights()
 
-				print(f"Posterior Velocity: {postvel}\n")
-				print(f"Test Velocity: {testvel}\n")
-				print(f"Obsvar {self.sigma2}")
-				print(f"Raidus: {self.radius}")
-				#print(f"Effective Particles {100*(self.counter/self.n)}")
-				#print(f"Covariance: {self.particle_covariance()}")
-				#self.rewind()
-				self.error.append( (postvel-testvel)**2)
-				print(f"Root Squared Error: {np.sqrt(self.error[-1])}\n")
-				print(f"Weight variance: {np.var(self.weights)}\n")			
-			except:
-				pass
-			
+		posterior = self.systematic_resample()
+
+		self.posterior_set.append(posterior)
+		self.particle_set.append(self.particles)
+		self.covariance_set.append(self.particle_covariance())
+		try:
+			print("===================================")
+			#print(f"Posterior Velocity Vector: {self.posterior_set[-1][3:5]}\n")
+			#print(f"Posterior Displacement: {(self.dt.total_seconds()/(3600*24))*np.linalg.norm(self.posterior_set[-1][:2] - self.posterior_set[-2][:2])}")
+			postvel = np.sqrt(self.posterior_set[-1][3]**2 +self.posterior_set[-1][4]**2 )
+			testvel = 24*self.testdem.dem.read(1)[self.testdem.index(self.posterior_set[-2][:2])]
+
+			print(f"Posterior Velocity: {postvel}\n")
+			print(f"Test Velocity: {testvel}\n")
+			print(f"Obsvar {self.sigma2}")
+			print(f"Raidus: {self.radius}")
+			#print(f"Effective Particles {100*(self.counter/self.n)}")
+			#print(f"Covariance: {self.particle_covariance()}")
+			#self.rewind()
+			self.error.append( (postvel-testvel)**2)
+			print(f"Root Squared Error: {np.sqrt(self.error[-1])}\n")
+			print(f"Weight variance: {np.var(self.weights)}\n")			
+		except:
+			pass
+		
+		if self.timecounter > 5:
+			self.re_initialize()
