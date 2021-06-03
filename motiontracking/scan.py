@@ -3,8 +3,8 @@ import laspy as lp
 import scipy
 from laspy.file import File
 from scipy.spatial import ConvexHull
-
-from sklearn.neighbors import KDTree 
+import sklearn
+from sklearn.neighbors import KDTree
 import pickle
 from os.path import splitext,isfile
 import time 
@@ -21,13 +21,13 @@ class Scan():
 			self.file = File(self.filepath.filepath,mode="r")
 			self.header = self.file.header
 			self.points = np.vstack([self.file.x, self.file.y, self.file.z]).transpose()
-			self.tree = KDTree(self.points[:,:2],leaf_size=2**2,metric='euclidean')
+			self.tree = sklearn.neighbors.KDTree(self.points[:,:2],leaf_size=2**4,metric='euclidean')
 			self.datetime = filepath.datetime
 
 	def __getitem__(self,indices):
 		return self.points[indices]
 
-	def query(self,point,radius,maxpoints=1000,calibrate=False):
+	def query(self,point,radius,calibrate=False):
 		point = np.array(point).flatten().reshape(1,2)
 		#return self.tree.query(point,return_distance=False,k=25)[0]
 		pointset =  self.tree.query_radius(point,r=radius)[0]
@@ -59,7 +59,9 @@ class Scan():
 
 	def convexhull(self,vertices=True):
 		if vertices:
-			return ConvexHull(self.points).vertices
+			hull = ConvexHull(self.points).vertices
+			return [self.points[vertex,:2].reshape(1,-1) for vertex in hull.tolist()]
+			
 		else:
 			return ConvexHull(self.points)
 

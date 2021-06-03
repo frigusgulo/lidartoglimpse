@@ -17,6 +17,8 @@ from .scanset import Scanset
 import time
 import cv2
 import glimpse
+import pdb
+import sys
 
 class Tracker:
 
@@ -34,10 +36,7 @@ class Tracker:
 		self.particles = None
 		self.weights = None
 		self.refclusters = None
-		self.testdem = Raster("/home/dunbar/Research/helheim/data/2016_cpd_vels/160819_060211.tif")
-		
-		self.templateimage = None
-		self.image_like = []
+
 		self.scans_like = []
 
 		self.weight_set = []
@@ -45,11 +44,12 @@ class Tracker:
 		self.posterior_set = []
 		self.covariance_set = []
 		self.timestep_set = []
-		self.error = []
+		
+		self.datetimes = []
 		self.initialize()
 
-	def optimal_radius(self,points=150):
-		for i in np.arange(3,100,0.15).tolist():
+	def optimal_radius(self,points=200):
+		for i in np.arange(3,200,0.15).tolist():
 			if max(self.refscan.query(self.motionmodel.xy,i,calibrate=True).shape)>=points:
 				self.radius= i
 				#print(f"Optimal Radius Is {self.radius} For {self.motionmodel.xy}")
@@ -70,7 +70,7 @@ class Tracker:
 		array = (array-mean)/std
 
 		elevs = np.abs(array[:,2])
-		cutoff = np.percentile(elevs,40,axis=0)
+		cutoff = np.percentile(elevs,60,axis=0)
 		#cutoff = std[-1]
 		keep = np.squeeze(np.argwhere(elevs < cutoff))
 		array = array[keep,:]
@@ -80,61 +80,23 @@ class Tracker:
 		#inds = np.random.choice(np.arange(size),size=int(size//2),replace=False)
 		return array
 
-	def extract_template(self,image,uv,xdim=10,ydim=10):
-		return cv.cvtColor(image[uv-xdim//2:uv+xdim//2,uv-ydim//2:uv+ydim//2],cv.COLOR_BGR2GRAY)
-
-	def normalize_img(self,img):
-		mean = np.mean(img)
-		var = np.var(img)
-		return (img-mean)/var
-
-	def image_init(self,image):
-		loc = image.xyz_to_uv(self.particle_mean()[:2])
-		templateimage = self.extract_template(image,loc)
-		self.templateimage = self.normalize_img(img)
-		self.image_datetime = image.datetime 
-
-	def get_images(self,particles):
-		self.test_images = []
-		if self.templateimage:
-			for particle in particles:
-				loc = image.xyz_to_uv(particle[:3])
-				image = self.normalize_img(self.extract_template(image,loc))
-				self.test_images.append(image)
-
-	def image_sse(self):
-		if len(self.test_images) >0:
-			return np.array([cv.matchTemplate(img,self.templateimage,cv.TM_SQDIFF) for img in self.test_images])
-			self.test_images = []
 
 
-	def image_likelihood(self,image):
-		if self.templateimage:
-			self.dt = image.datetime - self.datetime
-			self.datetime = image.datetime
-			self.particles = self.motionmodel.evolve_particles(self.particles,self.dt)
-			self.get_images(self.particles)
-			image_sse = self.image_sse()
-			w =  np.exp(-image_sse) + 1e-300
-			w/=w.sum()
-			self.image_like.append(w)
-			return w
-		else:
-			self.image_init(image)
+
+
 
 	def initialize(self, calibrate=False):
 		self.optimal_radius()
 		#self.length_scale = .17
 		self.length_scale = 1/self.radius
 		self.sigma2 = 2.5/self.radius
-		self.alpha = 10
-		#print(f"Lengthscale : {self.length_scale} | Obsvar : {self.sigma2} | Alpha : {self.alpha}")
+	
 		self.kernel = Matern(length_scale=self.length_scale,nu=0.5) #MSE was about 3.4
 		#self.kernel = RationalQuadratic(self.length_scale,self.alpha)
 		self.particles = self.motionmodel.init_particles()
 		self.particles_init = self.particles.copy()
 		self.ref_index = np.linspace(0,len(self.particles_init)-1,len(self.particles_init)).astype(int)
-		self.reference_points = self.refscan[self.refscan.query(self.motionmodel.xy,self.radius,maxpoints=self.points)]
+		self.reference_points = self.refscan[self.refscan.query(self.motionmodel.xy,self.radius)]
 		
 		
 		self.x_train = self.normalize(self.reference_points,self.motionmodel.xy)
@@ -152,15 +114,14 @@ class Tracker:
 		self.particle_set.append(self.particles)
 		self.covariance_set.append(self.particle_covariance())
 
-	def re_initialize(self,scan):
-		self.refscan = scan
+	def re_initialize(self):
 		prior = self.particle_mean()
 		self.particles[:,:2] = self.motionmodel.xy
-		self.reference_points = self.refscan[self.refscan.query(self.motionmodel.xy,self.radius,maxpoints=self.points)]
+		self.reference_points = self.refscan[self.refscan.query(self.motionmodel.xy,self.radius)]
 		self.x_train = self.normalize(self.reference_points,self.motionmodel.xy)
 		K = self.kernel(self.x_train[:,:2])+ self.sigma2*np.eye(self.x_train.shape[0])
 		self.Kinv = np.linalg.inv(K)
-		self.premu = self.Kinv @ self.x_train[:,2]
+		self.premu = self.Kinv@self.x_train[:,2]
 
 	
 	def particle_mean(self)-> np.ndarray:
@@ -185,12 +146,16 @@ class Tracker:
 		delta_0 = self.particles_init[self.ref_index,:2] - self.motionmodel.xy
 		delta_p = self.particles[:,:3] - self.particles_init[self.ref_index,:3] 
 		# Will try and normalize by query point; using this approach precludes the use of precomputed values
-		testclouds = [scan.query(point,self.radius,maxpoints=self.points) for point in list(self.particles[:,:2])]# - delta_0]
-		particle_loglike = []
+		#unique_particles,indexes,rev_index = np.unique(np.rint(self.particles[:,:2]),axis=0,return_index=True,return_inverse=True)
+		#print(f"Unique Reduction: {max(self.particles.shape)} ----> {max(indexes.shape)}",flush=True)
+		#sys.stdout.write("\033[F") # Cursor up one line
+		#time.sleep(.1)
+		testclouds = [scan.query(point,self.radius) for point in list(self.particles[:,:2])]# - delta_0]
+		particle_loglike = np.zeros_like(self.particles[:,0])
 		start = time.time()
 		self.counter = 0
 		for i,testcloud in enumerate(testclouds):
-			x_test_pre = scan.points[np.array(testcloud)] #- delta_p[i,:]
+			x_test_pre = scan.points[np.array(testcloud)]#- delta_p[i,:]
 			#print(f"Normalization: {x_test_pre.shape} --> {x_test.shape}")
 			
 			if x_test_pre.shape[0] > self.points//13:
@@ -201,33 +166,21 @@ class Tracker:
 				mu = Kstar @ self.premu
 				Sigma = Kss - Kstar @ self.Kinv @ Kstar.T + self.sigma2*np.eye(Kss.shape[0])
 				log_like = -0.5*(np.log(2*np.pi)*x_test.shape[0] ) + np.linalg.slogdet(Sigma)[1] +0.5*(x_test[:,2]-mu)@np.linalg.inv(Sigma)@(x_test[:,2]-mu).T
-				particle_loglike.append(log_like)
+				#pdb.set_trace()
+				particle_loglike[i] = log_like
 			else:
 				#print(f"Not enough points: {x_test.shape}")
-				particle_loglike.append(np.nan)
+				particle_loglike[i] = np.nan
 
-		particle_loglike = np.array(particle_loglike)
-		particle_loglike[np.isnan(particle_loglike)] = np.nanmin(particle_loglike)
+	
+		particle_loglike[np.isnan(particle_loglike)] = np.nanmean(particle_loglike)
 		w = np.exp((particle_loglike-particle_loglike.max()))
-
-		w[np.isnan(w)] = 0
 		w+= 1e-300
 		w/=w.sum()
 		
 		return w
 
 
-	
-	def update_weights(self):
-		try:
-			weights = self.scans_like.pop(-1)
-		except:
-			pass
-		
-		weights /= weights.sum()
-
-		self.weights = weights
-		self.weight_set.append(self.weights)
 
 	def systematic_resample(self):
 
@@ -266,46 +219,21 @@ class Tracker:
 	
 
 
-	def track(self, observation ,likelihoods = None,calibrate: bool = False,dt: datetime.timedelta =None):
-	
-		if calibrate:
-			#print(f"\n Calibrating From {self.refscan}\n")
-			
-			self.update_weights(self.refscan,dt)
-			posterior = self.systematic_resample()
+	def track(self, observation ,likelihoods = None,dt: datetime.timedelta =None):
 
 		if isinstance(observation,glimpse.Image) and likelihoods is not None:
 			#self.image_like.append(likelihoods)
 			self.weights = likelihoods
-			
 
-
-		elif isinstance(observation,Scan):
+		elif isinstance(observation,Scan) and likelihoods is None:
 			self.weights = self.scans_likelihood(observation)
+
+	
+
 
 		self.weight_set.append(self.weights)
 		posterior = self.systematic_resample()
-
+		self.datetimes.append(observation.datetime)
 		self.posterior_set.append(posterior)
 		self.particle_set.append(self.particles)
 		self.covariance_set.append(self.particle_covariance())
-		try:
-			#print("===================================")
-			#print(f"Posterior Velocity Vector: {self.posterior_set[-1][3:5]}\n")
-			#print(f"Posterior Displacement: {(self.dt.total_seconds()/(3600*24))*np.linalg.norm(self.posterior_set[-1][:2] - self.posterior_set[-2][:2])}")
-			#postvel = np.sqrt(self.posterior_set[-1][3]**2 +self.posterior_set[-1][4]**2 )
-			#testvel = 24*self.testdem.dem.read(1)[self.testdem.index(self.posterior_set[-2][:2])]
-
-			#print(f"Posterior Velocity: {postvel}\n")
-			#print(f"Test Velocity: {testvel}\n")
-			#print(f"Obsvar {self.sigma2}")
-			#print(f"Raidus: {self.radius}")
-			#print(f"Effective Particles {100*(self.counter/self.n)}")
-			#print(f"Covariance: {self.particle_covariance()}")
-			#self.rewind()
-			self.error.append( (postvel-testvel)**2)
-			#print(f"Root Squared Error: {np.sqrt(self.error[-1])}\n")
-			#print(f"Weight variance: {np.var(self.weights)}\n")			
-		except:
-			pass
-		

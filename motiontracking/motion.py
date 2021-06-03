@@ -31,7 +31,11 @@ class CartesianMotion:
 		#self.rotation = np.array([[np.cos(-15),-np.sin(-15)],[np.sin(-15),np.cos(-15)]] )@np.array([[1,0],[0,-1]])
 		# rotate coordinates system by -15 degs and flip about x axis
 
-	def init_particles(self):
+	def init_particles(self,prior=None):
+
+		if prior is not None:
+			self.vxyz = prior[3:]
+
 		"""
 		Initialize particles around an initial mean position.
 		Returns:
